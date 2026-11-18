@@ -31,10 +31,17 @@
 
   // The model in one function: the page recomputes a row from the snapshot figures and checks the
   // number board.json carries, so the page's code and the board's data are the same arithmetic.
-  function impliedOf(row, model) {
+  // Growth is dampened with a square root so one extreme week cannot dominate; momentum rewards a
+  // large protocol that is also growing, and nothing else.
+  function impliedOf(row, model, floorUsd) {
     var base = Math.pow(row.tvl_usd / 1e6, model.tvl_exponent) * model.tvl_scale_usd;
     var growth = Math.min(model.growth_cap, Math.max(model.growth_floor, row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d));
-    var growthMult = 1 + (growth / 100) * model.growth_weight;
+    var g = growth / 100;
+    var growthMult = 1 + (g < 0 ? -1 : g > 0 ? 1 : 0) * Math.sqrt(Math.abs(g)) * model.growth_damp;
+    var change = row.change_7d === null || row.change_7d === undefined ? 0 : row.change_7d;
+    var momentumMult = (row.tvl_usd >= floorUsd && change > 0)
+      ? 1 + model.momentum_bonus * (Math.min(change, model.momentum_cap_pct) / model.momentum_cap_pct)
+      : 1;
     var age = row.age_days === null || row.age_days === undefined ? null : row.age_days;
     var ageMult = age === null
       ? model.unknown_age_multiplier
@@ -44,7 +51,7 @@
     if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0 || c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0 || c.indexOf('risk curator') >= 0 || c.indexOf('restak') >= 0) catMult = model.category_high;
     else if (c.indexOf('bridge') >= 0 || c.indexOf('payment') >= 0 || c.indexOf('liquid staking') >= 0) catMult = model.category_low;
     var chainMult = 1 + model.chain_step * Math.min((row.chains || []).length, model.chain_cap);
-    return Math.max(1, Math.round(base * growthMult * ageMult * catMult * chainMult));
+    return Math.max(1, Math.round(base * growthMult * momentumMult * ageMult * catMult * chainMult));
   }
 
   function el(tag, attrs) {
@@ -86,13 +93,13 @@
   function actionFor(p, capital, chain) {
     var c = (p.category || '').toLowerCase();
     var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + ' of USDC to ' + name + ' on ' + chain + ' and keep the position open.';
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Supply $' + capital + " of USDC to " + name + "'s main lending market on " + chain + ', check the supply APY before you commit, and keep the position open.';
     if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Provide $' + capital + ' of liquidity to ' + name + "'s main pool on " + chain + ' and keep the position open.';
     if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' of USDC to ' + chain + ' through ' + name + ' and use the bridged funds in its app.';
     if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Stake $" + capital + " of the chain's staking asset through " + name + ' and keep the receipt token.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ' and open one small hedged trade.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Deposit $' + capital + ' of USDC as margin on ' + name + ', open one small hedged perp position, and check the funding rate before you size it.';
     if (c.indexOf('prediction') >= 0) return 'Fund $' + capital + ' and place one market position on ' + name + '.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' vault on ' + chain + ' and keep the vault shares.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Deposit $' + capital + ' into a ' + name + ' curator vault on ' + chain + ', read which strategies the curator runs and what fee it takes, and keep the vault shares.';
     if (c.indexOf('stable') >= 0) return 'Mint or deposit $' + capital + ' of the stable asset through ' + name + ' on ' + chain + '.';
     if (c.indexOf('rwa') >= 0) return "Mint $" + capital + " of the protocol's yield-bearing asset on " + chain + ' and hold it.';
     if (c.indexOf('insurance') >= 0) return 'Buy $' + capital + ' of cover from ' + name + ' on ' + chain + ' and keep the policy active.';
@@ -102,13 +109,13 @@
   function secondActionFor(p, capital, chain) {
     var c = (p.category || '').toLowerCase();
     var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Borrow $' + capital + ' of a stable asset against the deposit on ' + name + ', then repay half of it a week later.';
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return 'Borrow $' + capital + ' of a stable asset against the deposit on ' + name + ' and loop it back into supply only if the borrow rate is below the supply APY, then repay half of it a week later.';
     if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return 'Swap $' + capital + " through " + name + "'s router on " + chain + ' and add the proceeds to a second pool.';
     if (c.indexOf('bridge') >= 0) return 'Bridge $' + capital + ' back the other way through ' + name + ' so the round trip is recorded.';
     if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return 'Delegate or restake $' + capital + ' more through ' + name + ' and keep the new receipt alongside the first.';
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Close the first trade on ' + name + ' and open a second one half the size, on the opposite side.';
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return 'Provide $' + capital + " of liquidity to " + name + "'s perp market if it pays makers, then close the first trade and open a second one half the size on the opposite side.";
     if (c.indexOf('prediction') >= 0) return 'Settle the first market on ' + name + ' and place a second position in a different market.';
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Move $' + capital + ' into a second ' + name + ' vault on ' + chain + ' with a different strategy.';
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return 'Move $' + capital + ' into a second ' + name + ' vault on ' + chain + " with a different strategy, and compare the two curators' allocations and fees.";
     if (c.indexOf('stable') >= 0) return 'Redeem $' + capital + ' of the stable asset through ' + name + ' and re-mint it a week later.';
     if (c.indexOf('rwa') >= 0) return 'Claim the yield accrued on the first mint and reinvest $' + capital + ' of it through ' + name + '.';
     if (c.indexOf('insurance') >= 0) return 'File a test claim on the ' + name + ' policy and renew the cover for another term.';
@@ -118,13 +125,13 @@
   function verifyFor(p) {
     var c = (p.category || '').toLowerCase();
     var name = p.name;
-    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return "Open " + name + "'s rewards page and confirm the supply position and the borrow both show as active.";
+    if (c.indexOf('lend') >= 0 || c.indexOf('cdp') >= 0 || c.indexOf('collateral') >= 0) return "Open " + name + "'s rewards page and confirm the supply position, the borrow and the loop all show as active, and the borrow rate is still below the supply APY.";
     if (c.indexOf('dex') >= 0 || c.indexOf('yield') >= 0 || c.indexOf('leveraged farm') >= 0) return "Open " + name + "'s points page and confirm both pools show liquidity and the swaps are counted.";
     if (c.indexOf('bridge') >= 0) return "Open " + name + "'s activity page and confirm both bridge legs show as completed.";
     if (c.indexOf('staking') >= 0 || c.indexOf('restak') >= 0) return "Open " + name + "'s staking page and confirm both receipts show the same wallet.";
-    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return "Open " + name + "'s trading page and confirm the trade volume and the margin both show.";
+    if (c.indexOf('perpetual') >= 0 || c.indexOf('derivative') >= 0) return "Open " + name + "'s trading page and confirm the trade volume, the margin and the liquidity position all show.";
     if (c.indexOf('prediction') >= 0) return "Open " + name + "'s positions page and confirm both markets show as settled or open.";
-    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "Open " + name + "'s vault page and confirm both vault shares show in the wallet.";
+    if (c.indexOf('curator') >= 0 || c.indexOf('allocator') >= 0) return "Open " + name + "'s vault page and confirm both vault shares show in the wallet, and check each curator's current allocation and fee.";
     if (c.indexOf('stable') >= 0) return "Open " + name + "'s dashboard and confirm the mint and the re-mint both show.";
     if (c.indexOf('rwa') >= 0) return "Open " + name + "'s holdings page and confirm the yield accrued and the reinvestment both show.";
     if (c.indexOf('insurance') >= 0) return "Open " + name + "'s policy page and confirm the cover and the claim both show.";
@@ -144,7 +151,8 @@
     var hold = holdDaysFor(p.age_days);
     return [
       { text: 'Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.', cost: 'under $3 of gas for the first transaction', time: '5 minutes' },
-      { text: actionFor(p, capital, chain), cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
+      { text: actionFor(p, capital, chain) + ' When the wallet asks, approve only the amount you are depositing, never an unlimited spend.', cost: '$' + capital + ' of capital and about $' + (capital >= 150 ? 8 : 4) + ' of gas', time: '15 minutes to set up' },
+      { text: 'After the position lands, open the protocol\'s page and confirm it shows with the amount you deposited, then save the transaction hash and a screenshot of the page in your farm log.', cost: 'no fee to check', time: '5 minutes' },
       { text: secondActionFor(p, second, chain), cost: '$' + second + ' of capital and about $3 of gas', time: '10 minutes' },
       { text: 'Make one qualifying action each week, such as a deposit, a borrow, a swap or a vote.', cost: 'about $2 of gas a week', time: '10 minutes a week' },
       { text: 'Hold the position for at least ' + hold + ' days so the activity is counted in more than one snapshot.', cost: 'the $' + capital + ' stays in the position', time: hold + ' days' },
@@ -372,9 +380,10 @@
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'One function scores every protocol, from the snapshot\u2019s own figures. No name is special-cased and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        el('div', null, el('b', { text: 'implied = round( base x growth x age x category x chains )' })),
+        el('div', null, el('b', { text: 'implied = round( base x growth x momentum x age x category x chains )' })),
         el('div', { text: 'base     = (tvl_usd / 1M) ^ ' + m.tvl_exponent + ' x $' + (m.tvl_scale_usd / 1e6).toFixed(0) + 'M' }),
-        el('div', { text: 'growth   = 1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight }),
+        el('div', { text: 'growth   = 1 + sign(g) x sqrt(|g|) x ' + m.growth_damp + ', g = clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100' }),
+        el('div', { text: 'momentum = 1 + ' + m.momentum_bonus + ' x min(change_7d, ' + m.momentum_cap_pct + ') / ' + m.momentum_cap_pct + ', only for a large protocol that is growing' }),
         el('div', { text: 'age      = ' + m.age_floor + ' + ' + m.age_range + ' x log(1 + min(age_days, ' + m.age_cap_days + ') / ' + m.age_scale_days + ') / log(1 + ' + m.age_cap_days + ' / ' + m.age_scale_days + ')' }),
         el('div', { text: 'category = ' + m.category_high + ' for perps, derivatives, lending, CDP, collateral, risk curators and restaking; ' + m.category_low + ' for bridges, payments and liquid staking; 1.00 otherwise' }),
         el('div', { text: 'chains   = 1 + ' + m.chain_step + ' x min(chains, ' + m.chain_cap + ')' })
@@ -383,7 +392,9 @@
         el('dt', { text: 'TVL, log-scaled' }),
         el('dd', { text: 'A $2.7B protocol is worth about 11x a $50M one, not 55x. Size matters, but it does not swallow the board.' }),
         el('dt', { text: 'Seven-day growth' }),
-        el('dd', { text: 'A week\u2019s move is real but noisy, so it is clamped and enters at face value. Decline is penalised the same way growth is rewarded.' }),
+        el('dd', { text: 'A week\u2019s move is real but noisy, so it is clamped and dampened with a square root: one extreme week cannot dominate the ranking. Decline is penalised the same way growth is rewarded.' }),
+        el('dt', { text: 'Momentum at scale' }),
+        el('dd', { text: 'A protocol that is both large and growing earns a small extra multiplier; a spike on a tiny base earns nothing. Sustained growth at scale is worth more than a one-week jump.' }),
         el('dt', { text: 'Age with no token' }),
         el('dd', { text: 'The longer a protocol has run with no token, the more value has accrued — with diminishing returns. A year of waiting is worth most of the premium.' }),
         el('dt', { text: 'Category and chains' }),
@@ -403,7 +414,7 @@
     writeHash();
     dialog.textContent = '';
     var steps = farmSteps(row);
-    var recomputed = impliedOf(row, DATA.model);
+    var recomputed = impliedOf(row, DATA.model, DATA.floor_usd);
     dialog.appendChild(el('div', { class: 'detail-head' },
       el('div', null,
         el('span', { class: 'brand-name', text: 'Rank ' + row.rank + ' of ' + DATA.board_size + ' — no token' }),
@@ -419,6 +430,7 @@
         el('div', null, el('span', { text: 'TVL base (log-scaled)' }), el('b', { class: 'num', text: fmtUsd(row.tvl_base_usd) })),
         el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
         el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: fmtMult(row.growth_multiplier) })),
+        el('div', null, el('span', { text: 'Momentum multiplier' }), el('b', { class: 'num', text: fmtMult(row.momentum_multiplier) })),
         el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
         el('div', null, el('span', { text: 'Age multiplier' }), el('b', { class: 'num', text: fmtMult(row.age_multiplier) })),
         el('div', null, el('span', { text: 'Category multiplier' }), el('b', { class: 'num', text: fmtMult(row.category_multiplier) })),

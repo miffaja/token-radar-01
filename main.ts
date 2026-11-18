@@ -1,9 +1,11 @@
-// Token Radar (radar-2): read the sealed snapshot, score the board, write the dashboard.
+// Token Radar (radar-2.1): read the sealed snapshot, score the board, write the dashboard.
 //
 //   node main.ts --input <snapshot.json|directory> [--output <dir>]
 //
 // Reads /input/snapshot.json (or --input, or MAKEFUN_INPUT_DIR), scores every rankable pre-token
-// protocol with the model in lib/model.ts, writes the ranked board to /output/board.json, writes the
+// protocol with the model in lib/model.ts (radar-2.1: the week's move is dampened with a square root
+// so one extreme week cannot dominate, and a large protocol that is also growing earns a small
+// momentum multiplier), writes the ranked board to /output/board.json, writes the
 // dashboard's data as /output/data.js, copies this repository's dashboard/ and screenshots/ to
 // /output, and writes /output/dossier.json with the vendored make.fun library. Node 22, standard
 // library only, no network, no randomness, no wall clock: the same input always writes the same
