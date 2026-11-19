@@ -4,7 +4,7 @@
 [![rank](https://make.fun/badge/token-radar-01/miffaja/token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 [![reward](https://make.fun/badge/token-radar-01/miffaja/token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
 
-Token Radar (radar-2): 226 pre-token protocols ranked by an implied value that follows from the snapshot's own figures — log-scaled TVL, seven-day growth, age with no token, a small category tilt and chain breadth — with a concrete farm plan for each one and the live-token protocols set apart below the board.
+Token Radar (radar-2.1): 226 pre-token protocols ranked by an implied value that follows from the snapshot's own figures — log-scaled TVL, seven-day growth, age with no token, a small category tilt and chain breadth — with a concrete farm plan for each one and the live-token protocols set apart below the board.
 
 ## Run it
 
