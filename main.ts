@@ -1,15 +1,15 @@
-// Token Radar (radar-2.1): read the sealed snapshot, score the board, write the dashboard.
+// Token Radar (radar-3): read the sealed snapshot, fit the model, score the board, write the dashboard.
 //
 //   node main.ts --input <snapshot.json|directory> [--output <dir>]
 //
-// Reads /input/snapshot.json (or --input, or MAKEFUN_INPUT_DIR), scores every rankable pre-token
-// protocol with the model in lib/model.ts (radar-2.1: the week's move is dampened with a square root
-// so one extreme week cannot dominate, and a large protocol that is also growing earns a small
-// momentum multiplier), writes the ranked board to /output/board.json, writes the
-// dashboard's data as /output/data.js, copies this repository's dashboard/ and screenshots/ to
-// /output, and writes /output/dossier.json with the vendored make.fun library. Node 22, standard
-// library only, no network, no randomness, no wall clock: the same input always writes the same
-// bytes, so the two grading runs agree.
+// Reads /input/snapshot.json (or --input, or MAKEFUN_INPUT_DIR), fits the value and token-odds
+// models in lib/model.ts on the snapshot's own traded tokens and peers (every term tested held-out
+// before it is kept), scores every ranked pre-token protocol with a seeded bootstrap band, writes
+// the ranked board to /output/board.json, writes the dashboard's data as /output/data.js, copies
+// this repository's dashboard/ and screenshots/ to /output, and writes /output/dossier.json with
+// the vendored make.fun library. Node 22, standard library only, no network, no wall clock, and
+// the only randomness is a fixed-seed bootstrap: the same input always writes the same bytes, so
+// the two grading runs agree.
 //
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
