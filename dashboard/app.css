@@ -1,4 +1,4 @@
-/* Token Radar (radar-3) dashboard: evidence first, then the board. Dark, dense, one accent. */
+/* Token Radar (radar-4) dashboard: evidence first, then the board. Dark, dense, one accent. */
 :root {
   --bg: #0b0f14;
   --panel: #11161d;
@@ -115,6 +115,19 @@ table.board tbody tr:hover { background: var(--panel2); }
 .verdict.SKIP { background: #3a1717; color: #f09393; border: 1px solid #6e2424; }
 .net-sub { color: var(--faint); font-size: 10.5px; display: block; }
 .band { color: var(--faint); font-size: 11px; }
+.mech { font-size: 12px; }
+table.board tr.plan-row { cursor: default; }
+table.board tr.plan-row:hover { background: transparent; }
+table.board tr.plan-row td { text-align: left; white-space: normal; padding: 0; background: var(--panel2); }
+.plan-box { padding: 8px 12px 9px; }
+.plan-head { font-weight: 600; font-size: 12.5px; margin-bottom: 5px; }
+table.plan-steps { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.plan-steps th { color: var(--faint); font-weight: 500; text-align: left; padding: 2px 6px; border-bottom: 1px solid var(--line); cursor: default; }
+table.plan-steps th:nth-child(3), table.plan-steps th:nth-child(4) { text-align: right; }
+table.plan-steps td { padding: 2.5px 6px; border-bottom: 1px solid #1a222d; color: var(--dim); vertical-align: top; }
+table.plan-steps td.when { color: var(--accent); font-weight: 600; white-space: nowrap; }
+table.plan-steps td.num { text-align: right; white-space: nowrap; }
+.plan-budget { margin-top: 6px; font-size: 12px; color: var(--ink); border-top: 1px solid var(--line); padding-top: 6px; }
 
 /* Detail drawer */
 .scrim { position: fixed; inset: 0; background: rgba(4, 8, 12, .62); z-index: 40; }

@@ -1,21 +1,26 @@
-// Token Radar's value model (radar-3): one snapshot of the protocol universe in, one ranked board out.
+// Token Radar's value model (radar-4): one snapshot of the protocol universe in, one ranked board out.
 //
-// radar-3 fits its model on the snapshot's own record at run time, then tests every term held-out
-// before it is allowed into the ranking:
+// radar-4 fits its model on the snapshot's own record at run time and validates every part of it
+// held-out before it is allowed into the ranking:
 //
-//   ledger    Every one of the snapshot's protocols lands in exactly one group. The ranked group is
-//             the house watchlist rule applied at every TVL (no token recorded; category not Bridge,
-//             Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC or CEX; name not
-//             ending in a version marker, carrying no whole word wrapped/staked/staking, and not
-//             beginning with an exchange's name). The rest are set aside with their reason: token
-//             trades (a usable market cap), token recorded with no usable cap, exchange, bridge or
-//             liquid staking, versioned or wrapped. The watchlist is the floor: all 40 are ranked.
+//   ledger    Every one of the snapshot's protocols lands in exactly one of nine groups. The ranked
+//             set is the house watchlist rule applied at every TVL (no token recorded; category not
+//             Bridge, Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC or CEX; name
+//             not ending in a version marker, carrying no whole word wrapped/staked/staking, and
+//             not beginning with an exchange's name), split into the watchlist and the earlier
+//             protocols below the floor. The rest are set aside with their reason: token trades (a
+//             usable market cap), token recorded with no usable cap, exchange, bridge, liquid
+//             staking, versioned, wrapped. The watchlist is the floor: all 40 are ranked.
 //   launch    What a token would be worth if it launched: ln(mcap) fitted on the snapshot's traded
-//             tokens (deduplicated by CoinGecko id, exchanges and sub-$1M caps left out), a log-log
-//             size curve in TVL plus ridge category effects. Terms are added one at a time and kept
-//             only when they lower the held-out typical miss in BOTH leave-one-out and walk-forward
-//             (older-listed tokens pricing newer ones). A control term (another row's growth) is
-//             tested the same way and must not help. The flat cap/TVL multiple is the baseline.
+//             tokens (deduplicated by CoinGecko id, exchanges and sub-$1M caps left out) as a size
+//             curve at carry-projected TVL (one more week of the protocol's 7-day move beyond the
+//             snapshot median week, held to +/-25%) plus ridge category effects and a log chain
+//             count. The shipped form is validated as a whole against the flat multiple and the
+//             plain size curve in BOTH leave-one-out and walk-forward (older-listed tokens pricing
+//             newer ones), and each part is ablated: removing the carry, the category effects or
+//             the chain count raises the held-out miss. A seasoning term (settled TVL by days with
+//             no token) and a control term (another row's growth) are tested the same way and not
+//             kept. Coefficients ship with bootstrap standard errors from the 200 refits.
 //   odds      The chance a protocol ever records a token: a logistic fit over the 614 peers that
 //             could record one in their own right (the ranked pre-token set plus every protocol
 //             that already records a token; exchanges, bridge/liquid-staking products and
@@ -25,9 +30,12 @@
 //   implied   launch value x token odds, per protocol. A seeded bootstrap (200 refits of both
 //             models) gives each row a P25-P75 band and a rank range; the same input always writes
 //             the same bytes, so the two grading runs agree.
-//   farm      Each row's plan is sized to the protocol (0.02% of TVL, $1,000-$10,000), and the
-//             expected drop at a stated drop share is netted against gas over a stated horizon:
-//             net dollars, net per hour, and a FARM / THIN / SKIP verdict with stated thresholds.
+//   farm      Each row's plan is one of three stated deposit tiers ($1,000 / $10,000 / $50,000; the
+//             board files the $10,000 tier), and the expected drop at a stated drop share is netted
+//             against gas plus a 2%-a-year capital charge on the deposit over a stated horizon:
+//             net dollars, net per hour, the break-even drop share, and a FARM / THIN / SKIP verdict
+//             with stated thresholds. The dashboard recomputes every row at each tier and at drop
+//             shares of 2%, 6% and 15%.
 //
 // No protocol name is ever special-cased: selection, fitting and scoring read only the snapshot's
 // own figures, and the dashboard refits the same models in the browser from the same figures.
@@ -56,7 +64,7 @@ export interface Snapshot {
 }
 
 /** The model's version label: the dashboard names it. */
-export const MODEL_VERSION = 'radar-3';
+export const MODEL_VERSION = 'radar-4';
 
 /** How many live-token protocols the Live token table carries, by market cap. */
 export const LIVE_ROWS = 32;
@@ -66,13 +74,13 @@ export const BOOTSTRAP_REFITS = 200;
 
 /** The farm plan's stated assumptions, as the dashboard shows them. */
 export interface FarmAssumptions {
-  plan_pct_of_tvl: number;
-  plan_min_usd: number;
-  plan_max_usd: number;
+  deposit_tiers_usd: number[];
+  plan_usd: number;
   drop_share: number;
   horizon_weeks: number;
   gas_per_action_usd: number;
   gas_ethereum_usd: number;
+  capital_charge_rate: number;
   setup_hours: number;
   weekly_hours: number;
   claim_hours: number;
@@ -81,13 +89,13 @@ export interface FarmAssumptions {
 }
 
 export const FARM: FarmAssumptions = {
-  plan_pct_of_tvl: 0.0002,
-  plan_min_usd: 1_000,
-  plan_max_usd: 10_000,
+  deposit_tiers_usd: [1_000, 10_000, 50_000],
+  plan_usd: 10_000,
   drop_share: 0.06,
   horizon_weeks: 12,
   gas_per_action_usd: 0.6,
   gas_ethereum_usd: 2.5,
+  capital_charge_rate: 0.02,
   setup_hours: 1.0,
   weekly_hours: 0.15,
   claim_hours: 0.25,
@@ -173,6 +181,8 @@ export interface RadarRow {
   chain_effect: number;
   farm: FarmEconomics;
   farm_steps: string[];
+  /** The farm plan's mechanism in a few words, for the board's farm-plan column. */
+  plan_mech: string;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -194,6 +204,14 @@ export interface TermResult {
   kept: boolean;
 }
 
+/** One value-model form's held-out scores; exactly one form is the shipped model. */
+export interface VariantResult {
+  name: string;
+  loo: number;
+  wf: number;
+  shipped: boolean;
+}
+
 /** Everything the dashboard renders, from the snapshot. */
 export interface RadarData {
   as_of: string;
@@ -206,12 +224,15 @@ export interface RadarData {
   live_size: number;
   ledger: { id: string; label: string; count: number }[];
   ledger_total: number;
+  /** The snapshot's median 7-day move in per cent, over every protocol: the market week the carry is measured against. */
+  market_median_7d: number;
   value_model: {
     comps: number;
     flat: { loo: number; wf: number };
-    terms: TermResult[];
+    variants: VariantResult[];
     control: { loo: number; wf: number };
     coef: { intercept: number; ln_tvl: number; growth: number; age: number; chains: number; cat: Record<string, number> };
+    coef_se: { intercept: number; ln_tvl: number; chains: number; cat: Record<string, number> };
     range: { within3_loo: number; within3_wf: number; cover50_loo: number; cover50_wf: number; cover80_loo: number; cover80_wf: number };
   };
   odds_model: {
@@ -221,6 +242,7 @@ export interface RadarData {
     terms: TermResult[];
     control: { tenfold: number; wf: number };
     coef: { intercept: number; age_years: number; age_missing: number; ln_tvl: number; growth: number; chains: number; cat: Record<string, number> };
+    coef_se: { age_years: number; ln_tvl: number; growth: number };
     means: Record<string, number>;
     sds: Record<string, number>;
   };
@@ -400,26 +422,36 @@ export function isPreToken(p: SnapshotProtocol): boolean {
   return p.mcap_usd === null && !recordsToken(p);
 }
 
-/** The ledger group one protocol belongs to; every protocol is in exactly one. */
-export type LedgerGroup = 'ranked' | 'trades' | 'nocap' | 'exchange' | 'bridge' | 'versioned';
+/** The ledger group one protocol belongs to; every protocol is in exactly one of the nine. */
+export type LedgerGroup = 'watchlist' | 'early' | 'trades' | 'nocap' | 'exchange' | 'bridge' | 'staking' | 'versioned' | 'wrapped';
 
-export function ledgerGroup(p: SnapshotProtocol): LedgerGroup {
+export function ledgerGroup(p: SnapshotProtocol, watchlist: Set<string>): LedgerGroup {
   if (p.mcap_usd !== null && p.mcap_usd > 0) return 'trades';
   if (recordsToken(p)) return 'nocap';
   if (p.category === 'CEX' || EXCHANGE_NAME.test(p.name)) return 'exchange';
-  if (p.category !== null && OUT_CATEGORIES.has(p.category)) return 'bridge';
-  if (VERSIONED.test(p.name) || WRAP_WORD.test(p.name)) return 'versioned';
-  return 'ranked';
+  if (p.category === 'Bridge' || p.category === 'Canonical Bridge') return 'bridge';
+  if (p.category !== null && OUT_CATEGORIES.has(p.category)) return 'staking';
+  if (VERSIONED.test(p.name)) return 'versioned';
+  if (WRAP_WORD.test(p.name)) return 'wrapped';
+  return watchlist.has(p.slug) ? 'watchlist' : 'early';
+}
+
+/** Whether a ledger group is part of the ranked pre-token set. */
+export function isRankedGroup(g: LedgerGroup): boolean {
+  return g === 'watchlist' || g === 'early';
 }
 
 /** The ledger's groups in display order. */
 const LEDGER_LABELS: { id: LedgerGroup; label: string }[] = [
-  { id: 'ranked', label: 'Ranked pre-token' },
+  { id: 'watchlist', label: 'Ranked: watchlist' },
+  { id: 'early', label: 'Ranked: early, below the floor' },
   { id: 'trades', label: 'Token trades (priced comp)' },
   { id: 'nocap', label: 'Token recorded, no usable cap' },
   { id: 'exchange', label: 'Out: exchange' },
-  { id: 'bridge', label: 'Out: bridge / liquid staking' },
-  { id: 'versioned', label: 'Out: versioned or wrapped' },
+  { id: 'bridge', label: 'Out: bridge' },
+  { id: 'staking', label: 'Out: liquid staking' },
+  { id: 'versioned', label: 'Out: versioned' },
+  { id: 'wrapped', label: 'Out: wrapped or staked form' },
 ];
 
 /** The pricing comps: traded tokens with a usable cap, one row per CoinGecko id (largest TVL),
@@ -446,73 +478,87 @@ function ageYears(asOf: string, p: SnapshotProtocol): number | null {
   return d === null ? null : d / 365.25;
 }
 
-/** The value model's candidate terms, in the order they are tested. */
-type ValueTerm = 'size' | 'category' | 'growth' | 'age' | 'chains';
-const VALUE_TERMS: { id: ValueTerm; name: string }[] = [
-  { id: 'size', name: 'size curve, ln TVL' },
-  { id: 'category', name: 'category effect, ridge' },
-  { id: 'growth', name: '7-day TVL growth' },
-  { id: 'age', name: 'age, years listed' },
-  { id: 'chains', name: 'chain count' },
-];
+/** The value model's parts; a form is a set of parts. 'carry' is not a column of its own: it
+ *  projects the size curve's TVL one week forward at the protocol's excess 7-day move beyond the
+ *  snapshot median week, held to +/-25%. */
+type ValuePart = 'size' | 'carry' | 'category' | 'chains' | 'seasoning' | 'age' | 'growth';
 
-/** One value-model design row under a set of kept terms (intercept first). */
-function valueRow(p: SnapshotProtocol, asOf: string, terms: Set<ValueTerm>, cats: string[]): number[] {
+/** The shipped form: size curve at carry-projected TVL, ridge category effects, log chain count. */
+const SHIPPED_FORM: ReadonlySet<ValuePart> = new Set(['size', 'carry', 'category', 'chains']);
+
+/** The growth carry: one more week of the protocol's excess 7-day move beyond the snapshot median
+ *  week (`medAll`, in per cent), held to +/-25%. */
+function carryOf(p: SnapshotProtocol, medAll: number): number {
+  return Math.min(0.25, Math.max(-0.25, (growthPct(p) - medAll) / 100));
+}
+
+/** How settled a protocol's TVL is after its days with no token: 1 - exp(-days/365), with the
+ *  comps' median age (`medDays`) standing in when no listing date is recorded. */
+function settledOf(p: SnapshotProtocol, asOf: string, medDays: number): number {
+  return 1 - Math.exp(-(ageDays(asOf, p.listed_at) ?? medDays) / 365);
+}
+
+/** One value-model design row under a form (intercept first; columns in a fixed order). */
+function valueRow(p: SnapshotProtocol, asOf: string, form: ReadonlySet<ValuePart>, cats: string[], medAll: number, medDays: number): number[] {
   const x = [1];
-  if (terms.has('size')) x.push(Math.log(p.tvl_usd));
-  if (terms.has('category')) for (const c of cats) x.push((p.category ?? 'Other') === c ? 1 : 0);
-  if (terms.has('growth')) x.push(growthPct(p) / 100);
-  if (terms.has('age')) x.push(Math.log1p(ageYears(asOf, p) ?? 1));
-  if (terms.has('chains')) x.push(Math.min(p.chains.length, 10));
+  if (form.has('size')) x.push(Math.log(p.tvl_usd * (form.has('carry') ? 1 + carryOf(p, medAll) : 1)));
+  if (form.has('category')) for (const c of cats) x.push((p.category ?? 'Other') === c ? 1 : 0);
+  if (form.has('chains')) x.push(Math.log1p(Math.min(p.chains.length, 10)));
+  if (form.has('seasoning')) x.push(settledOf(p, asOf, medDays));
+  if (form.has('age')) x.push(Math.log1p(ageYears(asOf, p) ?? 1));
+  if (form.has('growth')) x.push(growthPct(p) / 100);
   return x;
 }
 
-/** The ridge penalty per column for a term set: category effects shrink, the rest do not. */
-function valuePenalty(terms: Set<ValueTerm>, cats: string[]): number[] {
+/** The ridge penalty per column for a form: category effects and seasoning shrink, the rest do not. */
+function valuePenalty(form: ReadonlySet<ValuePart>, cats: string[]): number[] {
   const pen = [0];
-  if (terms.has('size')) pen.push(0);
-  if (terms.has('category')) for (let i = 0; i < cats.length; i++) pen.push(10);
-  if (terms.has('growth')) pen.push(0);
-  if (terms.has('age')) pen.push(0);
-  if (terms.has('chains')) pen.push(0);
+  if (form.has('size')) pen.push(0);
+  if (form.has('category')) for (let i = 0; i < cats.length; i++) pen.push(10);
+  if (form.has('chains')) pen.push(0);
+  if (form.has('seasoning')) pen.push(10);
+  if (form.has('age')) pen.push(0);
+  if (form.has('growth')) pen.push(0);
   return pen;
 }
 
 /** Fit the value model on comps; returns weights for `valueRow`'s columns. */
-function fitValue(comps: SnapshotProtocol[], asOf: string, terms: Set<ValueTerm>, cats: string[]): number[] {
-  const X = comps.map((p) => valueRow(p, asOf, terms, cats));
+function fitValue(comps: SnapshotProtocol[], asOf: string, form: ReadonlySet<ValuePart>, cats: string[], medAll: number, medDays: number): number[] {
+  const X = comps.map((p) => valueRow(p, asOf, form, cats, medAll, medDays));
   const y = comps.map((p) => Math.log(p.mcap_usd!));
-  return ridgeFit(X, y, valuePenalty(terms, cats));
+  return ridgeFit(X, y, valuePenalty(form, cats));
 }
 
 /** The launch value one protocol gets under fitted weights. */
-function launchValue(p: SnapshotProtocol, asOf: string, terms: Set<ValueTerm>, cats: string[], w: number[]): number {
-  const x = valueRow(p, asOf, terms, cats);
+function launchValue(p: SnapshotProtocol, asOf: string, form: ReadonlySet<ValuePart>, cats: string[], medAll: number, medDays: number, w: number[]): number {
+  const x = valueRow(p, asOf, form, cats, medAll, medDays);
   let z = 0;
   for (let j = 0; j < x.length; j++) z += x[j]! * w[j]!;
   return Math.exp(z);
 }
 
-/** Held-out typical miss of a value term set: leave-one-out over all comps, and walk-forward
+/** Held-out typical miss of a value form: leave-one-out over all comps, and walk-forward
  *  (fit on the older-listed half, test on the newer half; comps with no listing date sit out). */
 function valueMiss(
   comps: SnapshotProtocol[],
   asOf: string,
-  terms: Set<ValueTerm>,
+  form: ReadonlySet<ValuePart>,
   cats: string[],
+  medAll: number,
+  medDays: number,
 ): { loo: number; wf: number; looPreds: number[] } {
   const actuals = comps.map((p) => p.mcap_usd!);
   const looPreds = comps.map((p, i) => {
     const train = comps.filter((_, j) => j !== i);
-    return launchValue(p, asOf, terms, cats, fitValue(train, asOf, terms, cats));
+    return launchValue(p, asOf, form, cats, medAll, medDays, fitValue(train, asOf, form, cats, medAll, medDays));
   });
   const dated = comps
     .map((p, i) => ({ p, i }))
     .filter((o) => o.p.listed_at !== null)
     .sort((a, b) => (a.p.listed_at! < b.p.listed_at! ? -1 : a.p.listed_at! > b.p.listed_at! ? 1 : a.p.slug < b.p.slug ? -1 : 1));
   const half = Math.floor(dated.length / 2);
-  const w = fitValue(dated.slice(0, half).map((o) => o.p), asOf, terms, cats);
-  const wfPreds = dated.slice(half).map((o) => launchValue(o.p, asOf, terms, cats, w));
+  const w = fitValue(dated.slice(0, half).map((o) => o.p), asOf, form, cats, medAll, medDays);
+  const wfPreds = dated.slice(half).map((o) => launchValue(o.p, asOf, form, cats, medAll, medDays, w));
   return {
     loo: typicalMiss(looPreds, actuals),
     wf: typicalMiss(wfPreds, dated.slice(half).map((o) => o.p.mcap_usd!)),
@@ -571,6 +617,40 @@ function fitOdds(
   return { fit: logitFit(X, y, oddsPenalty(terms, cats), iters), ageMedian };
 }
 
+/** The standard deviation of a sample (the bootstrap standard error of a coefficient). */
+function stdDev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const m = values.reduce((a, b) => a + b, 0) / values.length;
+  return Math.sqrt(values.reduce((a, b) => a + (b - m) ** 2, 0) / (values.length - 1));
+}
+
+/** An odds fit's coefficients on the raw feature scale, named: logit = w0 + sum wj (xj - muj)/sdj
+ *  = (w0 - sum wj muj/sdj) + sum (wj/sdj) xj. */
+function unstandardiseOdds(
+  model: { fit: { w: number[]; mu: number[]; sd: number[] }; ageMedian: number },
+  terms: Set<OddsTerm>,
+  cats: string[],
+): { intercept: number; age_years: number; age_missing: number; ln_tvl: number; growth: number; chains: number; cat: Record<string, number> } {
+  const { w, mu, sd } = model.fit;
+  let j = 1;
+  let intercept = w[0]!;
+  const raw = (idx: number): number => {
+    intercept -= (w[idx]! * mu[idx]!) / sd[idx]!;
+    return w[idx]! / sd[idx]!;
+  };
+  const coef = { intercept: 0, age_years: 0, age_missing: 0, ln_tvl: 0, growth: 0, chains: 0, cat: {} as Record<string, number> };
+  if (terms.has('age')) {
+    coef.age_years = raw(j++);
+    coef.age_missing = raw(j++);
+  }
+  if (terms.has('size')) coef.ln_tvl = raw(j++);
+  if (terms.has('growth')) coef.growth = raw(j++);
+  if (terms.has('chains')) coef.chains = raw(j++);
+  if (terms.has('category')) for (const c of cats) coef.cat[c] = raw(j++);
+  coef.intercept = intercept;
+  return coef;
+}
+
 /** The token odds one protocol gets under a fitted odds model. */
 function tokenOdds(
   p: SnapshotProtocol,
@@ -609,9 +689,15 @@ function oddsBrier(
   return { tenfold: brier(preds, y), wf: brier(wfPreds, dated.slice(half).map((o) => y[o.i]!)) };
 }
 
-/** The farm plan's size for one protocol, from its own TVL. */
+/** The farm plan's size: the stated deposit tier the board files (the dashboard switches tiers). */
 export function planSize(p: SnapshotProtocol, farm: FarmAssumptions): number {
-  return Math.min(farm.plan_max_usd, Math.max(farm.plan_min_usd, Math.round(p.tvl_usd * farm.plan_pct_of_tvl)));
+  void p;
+  return farm.plan_usd;
+}
+
+/** The capital charge on a deposit held for the horizon: 2% a year, pro-rated by weeks. */
+export function capitalCharge(plan: number, farm: FarmAssumptions): number {
+  return (plan * farm.capital_charge_rate * farm.horizon_weeks) / 52;
 }
 
 /** The gas one action costs on the protocol's first named chain (Ethereum mainnet costs more). */
@@ -619,11 +705,13 @@ export function gasPerAction(p: SnapshotProtocol, farm: FarmAssumptions): number
   return chainOf(p) === 'Ethereum' ? farm.gas_ethereum_usd : farm.gas_per_action_usd;
 }
 
-/** One row's netted farm economics: expected drop at the stated share, minus gas, over the horizon. */
+/** One row's netted farm economics: expected drop at the stated share, minus gas and the capital
+ *  charge on the deposit, over the horizon. `fees_usd` carries both costs so the filed arithmetic
+ *  (net = drop - fees) holds; the dashboard breaks the two out. */
 export function farmEconomics(p: SnapshotProtocol, implied: number, farm: FarmAssumptions): FarmEconomics {
   const plan = planSize(p, farm);
   const drop = (implied * farm.drop_share * plan) / Math.max(1, p.tvl_usd);
-  const fees = gasPerAction(p, farm) * (2 + farm.horizon_weeks);
+  const fees = gasPerAction(p, farm) * (2 + farm.horizon_weeks) + capitalCharge(plan, farm);
   const hours = farm.setup_hours + farm.weekly_hours * farm.horizon_weeks + farm.claim_hours;
   const net = drop - fees;
   const rate = net / hours;
@@ -638,6 +726,15 @@ export function farmEconomics(p: SnapshotProtocol, implied: number, farm: FarmAs
     net_per_hour: round4(rate),
     verdict,
   };
+}
+
+/** The drop share at which one row's plan breaks even, in per cent: (gas + capital charge) scaled
+ *  by TVL over (implied value x deposit). Above 100% the plan cannot pay at any share. */
+export function breakEvenPct(p: SnapshotProtocol, implied: number, farm: FarmAssumptions): number {
+  const plan = planSize(p, farm);
+  const costs = gasPerAction(p, farm) * (2 + farm.horizon_weeks) + capitalCharge(plan, farm);
+  if (implied <= 0 || plan <= 0) return Infinity;
+  return (costs * Math.max(1, p.tvl_usd) * 100) / (implied * plan);
 }
 
 /** A step as one string: its action, then its cost and time, within the gate's 20..600 characters. */
@@ -656,6 +753,23 @@ function chainOf(p: SnapshotProtocol): string {
 /** Money in a sentence: whole dollars, grouped. */
 function money(n: number): string {
   return `$${Math.round(n).toLocaleString('en-US')}`;
+}
+
+/** The farm plan's mechanism in a few words, for the board's farm-plan column. */
+export function mechFor(p: SnapshotProtocol): string {
+  const c = (p.category ?? '').toLowerCase();
+  if (c.includes('lend') || c.includes('cdp') || c.includes('collateral')) return 'Supply and borrow';
+  if (c.includes('dex') || c.includes('yield') || c.includes('leveraged farm')) return 'Liquidity and swaps';
+  if (c.includes('bridge')) return 'Bridge round trip';
+  if (c.includes('staking') || c.includes('restak')) return 'Stake and hold receipt';
+  if (c.includes('perpetual') || c.includes('derivative')) return 'Margin and hedged perp';
+  if (c.includes('prediction')) return 'Market positions';
+  if (c.includes('curator') || c.includes('allocator')) return 'Curated vault';
+  if (c.includes('stable')) return 'Mint and hold stable';
+  if (c.includes('rwa')) return 'Tokenised asset';
+  if (c.includes('insurance')) return 'Cover policy';
+  if (c.includes('payment')) return 'Payment flow';
+  return 'Deposit and hold';
 }
 
 /** The category's main action, in the words a farmer can follow. */
@@ -722,45 +836,49 @@ function verifyFor(p: SnapshotProtocol): string {
 export function farmSteps(p: SnapshotProtocol, econ: FarmEconomics, farm: FarmAssumptions): FarmStep[] {
   const chain = chainOf(p);
   const weeks = farm.horizon_weeks;
+  const days = weeks * 7;
   const sharePct = Math.round(farm.drop_share * 1000) / 10;
+  const gas = gasPerAction(p, farm) * (2 + weeks);
+  const charge = capitalCharge(econ.plan_usd, farm);
+  const exitTvl = money(p.tvl_usd * 0.7);
   return [
     {
-      text: `Size the plan first: ${money(econ.plan_usd)} into ${p.name} (0.02% of its TVL, clamped $1,000-$10,000). At a ${sharePct}% drop share the expected drop is ${money(econ.expected_drop_usd)} against about ${money(econ.fees_usd)} of gas over ${weeks} weeks: net ${money(econ.net_usd)}, ${money(econ.net_per_hour)} an hour - verdict ${econ.verdict}.`,
+      text: `Day 0 - Size the plan first: ${money(econ.plan_usd)} into ${p.name} (the middle of three deposit tiers, $1,000 / $10,000 / $50,000). At a ${sharePct}% drop share the expected drop is ${money(econ.expected_drop_usd)} against about ${money(gas)} of gas and ${money(charge)} of capital charge (2% a year on the deposit) over ${weeks} weeks: net ${money(econ.net_usd)}, ${money(econ.net_per_hour)} an hour - verdict ${econ.verdict}.`,
       cost: 'no fee to size the plan',
       time: '5 minutes',
     },
     {
-      text: `Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
+      text: `Day 0 - Use a fresh wallet that holds only the funds you plan to farm, and keep its seed phrase offline.`,
       cost: 'under $3 of gas for the first transaction',
       time: '5 minutes',
     },
     {
-      text: `${actionFor(p, econ.plan_usd, chain)} When the wallet asks, approve only the amount you are depositing, never an unlimited spend.`,
+      text: `Day 1 - ${actionFor(p, econ.plan_usd, chain)} When the wallet asks, approve only the amount you are depositing, never an unlimited spend.`,
       cost: `${money(econ.plan_usd)} of capital and about $1 of gas`,
       time: '15 minutes to set up',
     },
     {
-      text: `After the position lands, open the protocol's page and confirm it shows with the amount you deposited, then save the transaction hash and a screenshot of the page in your farm log.`,
+      text: `Day 1 - After the position lands, open the protocol's page and confirm it shows with the amount you deposited, then save the transaction hash and a screenshot of the page in your farm log.`,
       cost: 'no fee to check',
       time: '5 minutes',
     },
     {
-      text: secondActionFor(p, econ.plan_usd, chain),
+      text: `Day 8 - ${secondActionFor(p, econ.plan_usd, chain)}`,
       cost: 'about $1 of gas',
       time: '10 minutes',
     },
     {
-      text: `Make one qualifying action each week for ${weeks} weeks, such as a deposit, a borrow, a swap or a vote, so the activity is counted in more than one snapshot.`,
+      text: `Weekly - Make one qualifying action each week for ${weeks} weeks, such as a deposit, a borrow, a swap or a vote, so the activity is counted in more than one snapshot. Leave early if TVL drops under ${exitTvl} (30% below today): withdraw and stop.`,
       cost: `about ${money(gasPerAction(p, farm))} of gas a week`,
       time: '10 minutes a week',
     },
     {
-      text: verifyFor(p),
+      text: `Day ${days} - ${verifyFor(p)}`,
       cost: 'no fee to check',
       time: '10 minutes',
     },
     {
-      text: `Before you withdraw, claim only from the link the protocol itself publishes, never from a message or a search result, and write the wallet, the dates and every transaction in a farm log.`,
+      text: `Claim - Before you withdraw, claim only from the link the protocol itself publishes, never from a message or a search result, and write the wallet, the dates and every transaction in a farm log.`,
       cost: 'no fee to claim, and never pay to claim',
       time: '10 minutes',
     },
@@ -855,21 +973,25 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   const protocols = snapshot.protocols;
   const watchlist = new Set(snapshot.watchlist);
 
-  // The ledger: every protocol in exactly one group.
+  // The ledger: every protocol in exactly one of the nine groups.
   const groups = new Map<LedgerGroup, SnapshotProtocol[]>();
   for (const p of protocols) {
-    const g = ledgerGroup(p);
+    const g = ledgerGroup(p, watchlist);
     const arr = groups.get(g) ?? [];
     arr.push(p);
     groups.set(g, arr);
   }
-  const ranked = groups.get('ranked') ?? [];
+  const ranked = [...(groups.get('watchlist') ?? []), ...(groups.get('early') ?? [])];
   const comps = pricingComps(snapshot);
   // The odds peers: every protocol that records a token, plus the ranked pre-token set.
   const peers = protocols.filter((p) => {
-    const g = ledgerGroup(p);
-    return g === 'ranked' || g === 'trades' || g === 'nocap';
+    const g = ledgerGroup(p, watchlist);
+    return isRankedGroup(g) || g === 'trades' || g === 'nocap';
   });
+  // The market week: the snapshot's median 7-day move over every protocol, and the comps' median
+  // age in days (the seasoning stand-in for a missing listing date).
+  const medAll = median(protocols.map((p) => growthPct(p)));
+  const medDays = median(comps.map((p) => ageDays(asOf, p.listed_at)).filter((d): d is number => d !== null));
 
   // Ridge categories: those with at least 3 comps (value) / 10 peers (odds), in name order.
   const compCatCount = new Map<string, number>();
@@ -879,7 +1001,10 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   for (const p of peers) peerCatCount.set(p.category ?? 'Other', (peerCatCount.get(p.category ?? 'Other') ?? 0) + 1);
   const oddsCats = [...peerCatCount.entries()].filter(([, n]) => n >= 10).map(([c]) => c).sort();
 
-  // Value model: flat multiple baseline, then terms kept only if both held-out misses fall.
+  // Value model: flat multiple baseline, the plain size curve, and the shipped form (size curve at
+  // carry-projected TVL + ridge category effects + log chain count), each scored held-out in both
+  // tests; the shipped form's parts are ablated one at a time, and a seasoning term is tested on
+  // top of it.
   const flatLoo = (() => {
     const preds = comps.map((p, i) => p.tvl_usd * median(comps.filter((_, j) => j !== i).map((q) => q.mcap_usd! / q.tvl_usd)));
     return typicalMiss(preds, comps.map((p) => p.mcap_usd!));
@@ -890,29 +1015,24 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     const m = median(dated.slice(0, half).map((p) => p.mcap_usd! / p.tvl_usd));
     return typicalMiss(dated.slice(half).map((p) => p.tvl_usd * m), dated.slice(half).map((p) => p.mcap_usd!));
   })();
-  const keptValue = new Set<ValueTerm>();
-  const valueTerms: TermResult[] = [];
-  let currentMiss = { loo: flatLoo, wf: flatWf };
-  for (const t of VALUE_TERMS) {
-    const trial = new Set(keptValue);
-    trial.add(t.id);
-    const m = valueMiss(comps, asOf, trial, valueCats);
-    const kept = m.loo < currentMiss.loo && m.wf < currentMiss.wf;
-    if (kept) {
-      keptValue.add(t.id);
-      currentMiss = { loo: m.loo, wf: m.wf };
-    }
-    valueTerms.push({ name: t.name, loo: round4(m.loo), wf: round4(m.wf), kept });
-  }
-  // The control: the final model plus another row's growth must not help.
+  const formMiss = (form: ReadonlySet<ValuePart>) => valueMiss(comps, asOf, form, valueCats, medAll, medDays);
+  const sizeOnlyMiss = formMiss(new Set(['size']));
+  const shippedMiss = formMiss(SHIPPED_FORM);
+  const valueVariants: VariantResult[] = [
+    { name: 'size curve, ln TVL', loo: round4(sizeOnlyMiss.loo), wf: round4(sizeOnlyMiss.wf), shipped: false },
+    { name: 'shipped: size at carry-projected TVL + category + chain count (log)', loo: round4(shippedMiss.loo), wf: round4(shippedMiss.wf), shipped: true },
+    { name: 'shipped form without the carry', ...(() => { const m = formMiss(new Set(['size', 'category', 'chains'])); return { loo: round4(m.loo), wf: round4(m.wf) }; })(), shipped: false },
+    { name: 'shipped form without category effects', ...(() => { const m = formMiss(new Set(['size', 'carry', 'chains'])); return { loo: round4(m.loo), wf: round4(m.wf) }; })(), shipped: false },
+    { name: 'shipped form without chain count', ...(() => { const m = formMiss(new Set(['size', 'carry', 'category'])); return { loo: round4(m.loo), wf: round4(m.wf) }; })(), shipped: false },
+    { name: 'shipped form + seasoning (settled TVL by no-token days)', ...(() => { const m = formMiss(new Set([...SHIPPED_FORM, 'seasoning'])); return { loo: round4(m.loo), wf: round4(m.wf) }; })(), shipped: false },
+  ];
+  // The control: the shipped form plus another row's growth must not help.
   const controlMiss = (() => {
     const rotated = comps.map((p, i) => ({ ...p, change_7d: comps[(i + 1) % comps.length]!.change_7d }));
-    const withControl = new Set(keptValue);
-    withControl.add('growth');
-    return valueMiss(rotated, asOf, withControl, valueCats);
+    return valueMiss(rotated, asOf, new Set([...SHIPPED_FORM, 'growth']), valueCats, medAll, medDays);
   })();
-  const valueWeights = fitValue(comps, asOf, keptValue, valueCats);
-  const finalMiss = valueMiss(comps, asOf, keptValue, valueCats);
+  const valueWeights = fitValue(comps, asOf, SHIPPED_FORM, valueCats, medAll, medDays);
+  const finalMiss = shippedMiss;
 
   // Range honesty: residual quantiles from the leave-one-out predictions, coverage checked
   // leave-one-out (quantiles recomputed without each comp) and walk-forward (train-half quantiles).
@@ -936,9 +1056,9 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       .filter((o) => o.p.listed_at !== null)
       .sort((a, b) => (a.p.listed_at! < b.p.listed_at! ? -1 : a.p.listed_at! > b.p.listed_at! ? 1 : a.p.slug < b.p.slug ? -1 : 1));
     const half = Math.floor(dated.length / 2);
-    const w = fitValue(dated.slice(0, half).map((o) => o.p), asOf, keptValue, valueCats);
-    const trainRes = dated.slice(0, half).map((o) => Math.log(o.p.mcap_usd! / launchValue(o.p, asOf, keptValue, valueCats, w)));
-    const testPreds = dated.slice(half).map((o) => launchValue(o.p, asOf, keptValue, valueCats, w));
+    const w = fitValue(dated.slice(0, half).map((o) => o.p), asOf, SHIPPED_FORM, valueCats, medAll, medDays);
+    const trainRes = dated.slice(0, half).map((o) => Math.log(o.p.mcap_usd! / launchValue(o.p, asOf, SHIPPED_FORM, valueCats, medAll, medDays, w)));
+    const testPreds = dated.slice(half).map((o) => launchValue(o.p, asOf, SHIPPED_FORM, valueCats, medAll, medDays, w));
     const testActuals = dated.slice(half).map((o) => o.p.mcap_usd!);
     return {
       within3: testPreds.filter((pr, i) => Math.abs(Math.log(testActuals[i]! / pr)) <= Math.log(3)).length / testPreds.length,
@@ -1002,15 +1122,18 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
 
   // Point estimates for every ranked protocol.
   const point = ranked.map((p) => {
-    const launch = launchValue(p, asOf, keptValue, valueCats, valueWeights);
+    const launch = launchValue(p, asOf, SHIPPED_FORM, valueCats, medAll, medDays, valueWeights);
     const odds = tokenOdds(p, asOf, keptOdds, oddsCats, oddsModel);
     return { p, launch, odds, implied: Math.max(1, Math.round(launch * odds)) };
   });
 
   // Seeded bootstrap: refit both models on resampled comps/peers, reprice and re-rank every row.
+  // The refits' coefficients are kept too, for the shipped standard errors.
   const rand = rng(20261114);
   const samples = new Map<string, number[]>();
   const rankSamples = new Map<string, number[]>();
+  const valueWeightSamples: number[][] = [];
+  const oddsCoefSamples: { age_years: number; ln_tvl: number; growth: number }[] = [];
   for (const s of point) {
     samples.set(s.p.slug, []);
     rankSamples.set(s.p.slug, []);
@@ -1018,49 +1141,31 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
   for (let r = 0; r < BOOTSTRAP_REFITS; r++) {
     const compSample = comps.map(() => comps[Math.floor(rand() * comps.length)]!);
     const peerSample = peers.map(() => peers[Math.floor(rand() * peers.length)]!);
-    const w = fitValue(compSample, asOf, keptValue, valueCats);
+    const w = fitValue(compSample, asOf, SHIPPED_FORM, valueCats, medAll, medDays);
+    valueWeightSamples.push(w);
     const om = fitOdds(peerSample, asOf, keptOdds, oddsCats, 300);
+    const oc = unstandardiseOdds(om, keptOdds, oddsCats);
+    oddsCoefSamples.push({ age_years: oc.age_years, ln_tvl: oc.ln_tvl, growth: oc.growth });
     const priced = ranked.map((p) => ({
       slug: p.slug,
-      implied: launchValue(p, asOf, keptValue, valueCats, w) * tokenOdds(p, asOf, keptOdds, oddsCats, om),
+      implied: launchValue(p, asOf, SHIPPED_FORM, valueCats, medAll, medDays, w) * tokenOdds(p, asOf, keptOdds, oddsCats, om),
     }));
     const order = [...priced].sort((a, b) => b.implied - a.implied || (a.slug < b.slug ? -1 : 1));
     order.forEach((row, i) => rankSamples.get(row.slug)!.push(i + 1));
     for (const row of priced) samples.get(row.slug)!.push(row.implied);
   }
 
-  // Factor decomposition under the final weights.
+  // Factor decomposition under the shipped form's weights: the plain size value at this TVL, the
+  // carry's multiplier on it, the category effect and the chain-count effect.
   const decompose = (p: SnapshotProtocol): { size: number; cat: number; growth: number; age: number; chains: number } => {
-    const x = valueRow(p, asOf, keptValue, valueCats);
-    let j = 1;
-    let size = Math.exp(valueWeights[0]!);
+    const slope = valueWeights[1]!;
+    const size = Math.exp(valueWeights[0]! + slope * Math.log(p.tvl_usd));
+    const growth = Math.pow(1 + carryOf(p, medAll), slope);
     let cat = 1;
-    let growth = 1;
-    let age = 1;
-    let chains = 1;
-    if (keptValue.has('size')) {
-      size *= Math.exp(valueWeights[j]! * x[j]!);
-      j++;
-    }
-    if (keptValue.has('category')) {
-      let z = 0;
-      for (let c = 0; c < valueCats.length; c++) z += valueWeights[j + c]! * x[j + c]!;
-      cat = Math.exp(z);
-      j += valueCats.length;
-    }
-    if (keptValue.has('growth')) {
-      growth = Math.exp(valueWeights[j]! * x[j]!);
-      j++;
-    }
-    if (keptValue.has('age')) {
-      age = Math.exp(valueWeights[j]! * x[j]!);
-      j++;
-    }
-    if (keptValue.has('chains')) {
-      chains = Math.exp(valueWeights[j]! * x[j]!);
-      j++;
-    }
-    return { size, cat, growth, age, chains };
+    const ci = valueCats.indexOf(p.category ?? 'Other');
+    if (ci >= 0) cat = Math.exp(valueWeights[2 + ci]!);
+    const chains = Math.exp(valueWeights[2 + valueCats.length]! * Math.log1p(Math.min(p.chains.length, 10)));
+    return { size, cat, growth, age: 1, chains };
   };
 
   const sorted = [...point].sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
@@ -1105,38 +1210,42 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     };
   });
 
-  // The shipped coefficients, named for the dashboard's refit check.
+  // The shipped coefficients, named for the dashboard's refit check, with bootstrap standard
+  // errors from the 200 refits (the shipped form's columns: intercept, size, categories, chains).
   const valueCoef = (() => {
-    let j = 1;
-    const coef = { intercept: round6(valueWeights[0]!), ln_tvl: 0, growth: 0, age: 0, chains: 0, cat: {} as Record<string, number> };
-    if (keptValue.has('size')) coef.ln_tvl = round6(valueWeights[j++]!);
-    if (keptValue.has('category')) for (const c of valueCats) coef.cat[c] = round6(valueWeights[j++]!);
-    if (keptValue.has('growth')) coef.growth = round6(valueWeights[j++]!);
-    if (keptValue.has('age')) coef.age = round6(valueWeights[j++]!);
-    if (keptValue.has('chains')) coef.chains = round6(valueWeights[j++]!);
+    const coef = { intercept: round6(valueWeights[0]!), ln_tvl: round6(valueWeights[1]!), growth: 0, age: 0, chains: round6(valueWeights[2 + valueCats.length]!), cat: {} as Record<string, number> };
+    valueCats.forEach((c, i) => {
+      coef.cat[c] = round6(valueWeights[2 + i]!);
+    });
     return coef;
+  })();
+  const valueCoefSe = (() => {
+    const colSe = (j: number) => round6(stdDev(valueWeightSamples.map((w) => w[j]!)));
+    const se = { intercept: colSe(0), ln_tvl: colSe(1), chains: colSe(2 + valueCats.length), cat: {} as Record<string, number> };
+    valueCats.forEach((c, i) => {
+      se.cat[c] = colSe(2 + i);
+    });
+    return se;
   })();
   const oddsCoef = (() => {
-    // Unstandardise: logit = w0 + sum wj (xj - muj)/sdj = (w0 - sum wj muj/sdj) + sum (wj/sdj) xj.
-    const { w, mu, sd } = oddsModel.fit;
-    let j = 1;
-    let intercept = w[0]!;
-    const raw = (idx: number): number => {
-      intercept -= (w[idx]! * mu[idx]!) / sd[idx]!;
-      return w[idx]! / sd[idx]!;
+    const c = unstandardiseOdds(oddsModel, keptOdds, oddsCats);
+    const cat: Record<string, number> = {};
+    for (const k of Object.keys(c.cat)) cat[k] = round6(c.cat[k]!);
+    return {
+      intercept: round6(c.intercept),
+      age_years: round6(c.age_years),
+      age_missing: round6(c.age_missing),
+      ln_tvl: round6(c.ln_tvl),
+      growth: round6(c.growth),
+      chains: round6(c.chains),
+      cat,
     };
-    const coef = { intercept: 0, age_years: 0, age_missing: 0, ln_tvl: 0, growth: 0, chains: 0, cat: {} as Record<string, number> };
-    if (keptOdds.has('age')) {
-      coef.age_years = round6(raw(j++));
-      coef.age_missing = round6(raw(j++));
-    }
-    if (keptOdds.has('size')) coef.ln_tvl = round6(raw(j++));
-    if (keptOdds.has('growth')) coef.growth = round6(raw(j++));
-    if (keptOdds.has('chains')) coef.chains = round6(raw(j++));
-    if (keptOdds.has('category')) for (const c of oddsCats) coef.cat[c] = round6(raw(j++));
-    coef.intercept = round6(intercept);
-    return coef;
   })();
+  const oddsCoefSe = {
+    age_years: round6(stdDev(oddsCoefSamples.map((s) => s.age_years))),
+    ln_tvl: round6(stdDev(oddsCoefSamples.map((s) => s.ln_tvl))),
+    growth: round6(stdDev(oddsCoefSamples.map((s) => s.growth))),
+  };
 
   // Compact comp/peer figures for the browser refit and the scatter.
   const catsAll = ['Other', ...[...new Set(protocols.map((p) => p.category).filter((c): c is string => c !== null))].sort()];
@@ -1180,12 +1289,14 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
     live_size: live.length,
     ledger: LEDGER_LABELS.map((g) => ({ id: g.id, label: g.label, count: (groups.get(g.id) ?? []).length })),
     ledger_total: protocols.length,
+    market_median_7d: medAll,
     value_model: {
       comps: comps.length,
       flat: { loo: round4(flatLoo), wf: round4(flatWf) },
-      terms: valueTerms,
+      variants: valueVariants,
       control: { loo: round4(controlMiss.loo), wf: round4(controlMiss.wf) },
       coef: valueCoef,
+      coef_se: valueCoefSe,
       range,
     },
     odds_model: {
@@ -1195,6 +1306,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       terms: oddsTerms,
       control: { tenfold: round4(controlBrier.tenfold), wf: round4(controlBrier.wf) },
       coef: oddsCoef,
+      coef_se: oddsCoefSe,
       means: {},
       sds: {},
     },
@@ -1224,6 +1336,7 @@ export function buildRadar(snapshot: Snapshot): { board: BoardRow[]; radar: Rada
       chain_effect: r.model.chain_effect,
       farm: r.farm,
       farm_steps: r.farm_steps,
+      plan_mech: mechFor({ category: r.category } as SnapshotProtocol),
     })),
     live,
     comps_data: compsData,
